@@ -432,24 +432,24 @@ impl<A: Clone> Node<A> {
         Some(target_idx)
     }
 
-    pub fn index(&self, level: usize, index: usize) -> &A {
+    pub fn focus(&self, level: usize, index: usize) -> (usize, &Chunk<A>) {
         if level == 0 {
-            &self.children.unwrap_values()[index]
+            (index, self.children.unwrap_values())
         } else {
             let target_idx = self.index_in(level, index).unwrap();
-            self.children.unwrap_nodes()[target_idx]
-                .index(level - 1, index - self.size_up_to(level, target_idx))
+            let offset = index - self.size_up_to(level, target_idx);
+            self.children.unwrap_nodes()[target_idx].focus(level - 1, offset)
         }
     }
 
-    pub fn index_mut(&mut self, level: usize, index: usize) -> &mut A {
+    pub fn focus_mut(&mut self, level: usize, index: usize) -> (usize, &mut Chunk<A>) {
         if level == 0 {
-            &mut self.children.unwrap_values_mut()[index]
+            (index, self.children.unwrap_values_mut())
         } else {
             let target_idx = self.index_in(level, index).unwrap();
             let offset = index - self.size_up_to(level, target_idx);
             let child = Ref::make_mut(&mut self.children.unwrap_nodes_mut()[target_idx]);
-            child.index_mut(level - 1, offset)
+            child.focus_mut(level - 1, offset)
         }
     }
 
@@ -1003,7 +1003,8 @@ impl<'a, A: Clone> Iterator for IterMut<'a, A> {
         if self.front_index == self.back_index {
             return None;
         }
-        let r = self.root.index_mut(self.level, self.front_index);
+        let (chunk_index, chunk) = self.root.focus_mut(self.level, self.front_index);
+        let r = &mut chunk[chunk_index];
         self.front_index += 1;
         // I blame the Iterator trait in its entirety for this unsafe
         // block, it wouldn't be necessary if `fn next(&'a mut self)`
@@ -1024,7 +1025,8 @@ impl<'a, A: Clone> DoubleEndedIterator for IterMut<'a, A> {
             return None;
         }
         self.back_index -= 1;
-        let r = self.root.index_mut(self.level, self.back_index);
+        let (chunk_index, chunk) = self.root.focus_mut(self.level, self.front_index);
+        let r = &mut chunk[chunk_index];
         #[allow(unsafe_code)]
         Some(unsafe { &mut *(r as *mut _) })
     }

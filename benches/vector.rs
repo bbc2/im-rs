@@ -328,3 +328,43 @@ fn vector_append_100000(b: &mut Bencher) {
 // fn vector_extend_1000(b: &mut Bencher) {
 //     vector_extend(b, 1000)
 // }
+
+fn vector_index(b: &mut Bencher, count: usize) {
+    use std::ops::Index;
+    let vec = Vector::from_iter(0..count);
+    b.iter(|| {
+        for index in 0..count {
+            assert_eq!(index, *vec.index(index));
+        }
+    })
+}
+
+#[bench]
+fn vector_index_1000(b: &mut Bencher) {
+    vector_index(b, 1000)
+}
+
+#[bench]
+fn vector_index_10000(b: &mut Bencher) {
+    vector_index(b, 10000)
+}
+
+fn vector_index_mut(b: &mut Bencher, count: usize) {
+    use std::ops::IndexMut;
+    let mut vec = Vector::from_iter(0..count);
+    b.iter(|| {
+        for index in 0..count {
+            assert_eq!(index, *vec.index_mut(index));
+        }
+    })
+}
+
+#[bench]
+fn vector_index_mut_1000(b: &mut Bencher) {
+    vector_index_mut(b, 1000)
+}
+
+#[bench]
+fn vector_index_mut_10000(b: &mut Bencher) {
+    vector_index_mut(b, 10000)
+}

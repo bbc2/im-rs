@@ -55,6 +55,7 @@ use nodes::chunk::{
     Chunk, ConsumingIter as ConsumingChunkIter, Iter as ChunkIter, IterMut as ChunkIterMut,
     CHUNK_SIZE,
 };
+use nodes::focus::{Focus, FocusMut};
 use nodes::rrb::{
     ConsumingIter as ConsumingNodeIter, Iter as NodeIter, IterMut as NodeIterMut, Node, PopResult,
     PushResult, SplitResult,
@@ -141,6 +142,8 @@ pub struct Vector<A> {
     middle: Ref<Node<A>>,
     inner_b: Ref<Chunk<A>>,
     outer_b: Ref<Chunk<A>>,
+    focus: Focus<Chunk<A>>,
+    focus_mut: FocusMut<Chunk<A>>,
 }
 
 impl<A: Clone> Vector<A> {
@@ -154,6 +157,8 @@ impl<A: Clone> Vector<A> {
             middle: Ref::new(Node::new()),
             inner_b: Ref::new(Chunk::new()),
             outer_b: Ref::new(Chunk::new()),
+            focus: Focus::new(),
+            focus_mut: FocusMut::new(),
         }
     }
 
@@ -252,7 +257,15 @@ impl<A: Clone> Vector<A> {
         local_index -= self.inner_f.len();
 
         if local_index < self.middle.len() {
-            return Some(self.middle.index(self.middle_level, local_index));
+            if let Some((chunk_index, chunk)) = self.focus.get(local_index) {
+                return Some(&chunk[chunk_index]);
+            }
+
+            let (chunk_index, chunk) = self.middle.focus(self.middle_level, local_index);
+            let left = local_index - chunk_index;
+            let right = left + chunk.len();
+            self.focus.set(chunk, left, right);
+            return Some(&chunk[chunk_index]);
         }
         local_index -= self.middle.len();
 
@@ -306,8 +319,16 @@ impl<A: Clone> Vector<A> {
         local_index -= self.inner_f.len();
 
         if local_index < self.middle.len() {
+            if let Some((chunk_index, chunk)) = self.focus_mut.get(local_index) {
+                return Some(&mut chunk[chunk_index]);
+            }
+
             let middle = Ref::make_mut(&mut self.middle);
-            return Some(middle.index_mut(self.middle_level, local_index));
+            let (chunk_index, chunk) = middle.focus_mut(self.middle_level, local_index);
+            let left = local_index - chunk_index;
+            let right = left + chunk.len();
+            self.focus_mut.set(chunk, left, right);
+            return Some(&mut chunk[chunk_index]);
         }
         local_index -= self.middle.len();
 
@@ -509,6 +530,7 @@ impl<A: Clone> Vector<A> {
     /// # }
     /// ```
     pub fn push_front(&mut self, value: A) {
+        self.unfocus();
         if self.outer_f.is_full() {
             swap(&mut self.outer_f, &mut self.inner_f);
             if !self.outer_f.is_empty() {
@@ -538,6 +560,7 @@ impl<A: Clone> Vector<A> {
     /// # }
     /// ```
     pub fn push_back(&mut self, value: A) {
+        self.unfocus();
         if self.outer_b.is_full() {
             swap(&mut self.outer_b, &mut self.inner_b);
             if !self.outer_b.is_empty() {
@@ -567,6 +590,7 @@ impl<A: Clone> Vector<A> {
     /// # }
     /// ```
     pub fn pop_front(&mut self) -> Option<A> {
+        self.unfocus();
         if self.is_empty() {
             return None;
         }
@@ -606,6 +630,7 @@ impl<A: Clone> Vector<A> {
     /// # }
     /// ```
     pub fn pop_back(&mut self) -> Option<A> {
+        self.unfocus();
         if self.is_empty() {
             return None;
         }
@@ -645,6 +670,7 @@ impl<A: Clone> Vector<A> {
     /// # }
     /// ```
     pub fn append(&mut self, mut other: Self) {
+        self.unfocus();
         if other.is_empty() {
             return;
         }
@@ -716,6 +742,7 @@ impl<A: Clone> Vector<A> {
     where
         F: FnMut(&A) -> bool,
     {
+        self.unfocus();
         let len = self.len();
         let mut del = 0;
         for i in 0..len {
@@ -751,6 +778,7 @@ impl<A: Clone> Vector<A> {
     /// # }
     /// ```
     pub fn split_at(mut self, index: usize) -> (Self, Self) {
+        self.unfocus();
         let right = self.split_off(index);
         (self, right)
     }
@@ -778,6 +806,8 @@ impl<A: Clone> Vector<A> {
     pub fn split_off(&mut self, index: usize) -> Self {
         assert!(index < self.len());
 
+        self.unfocus();
+
         let mut local_index = index;
 
         if local_index < self.outer_f.len() {
@@ -790,6 +820,8 @@ impl<A: Clone> Vector<A> {
                 middle: replace_def(&mut self.middle),
                 inner_b: replace_def(&mut self.inner_b),
                 outer_b: replace_def(&mut self.outer_b),
+                focus: Focus::new(),
+                focus_mut: FocusMut::new(),
             };
             self.length = index;
             self.middle_level = 0;
@@ -808,6 +840,8 @@ impl<A: Clone> Vector<A> {
                 middle: replace_def(&mut self.middle),
                 inner_b: replace_def(&mut self.inner_b),
                 outer_b: replace_def(&mut self.outer_b),
+                focus: Focus::new(),
+                focus_mut: FocusMut::new(),
             };
             self.length = index;
             self.middle_level = 0;
@@ -856,6 +890,8 @@ impl<A: Clone> Vector<A> {
                 middle: right_middle,
                 inner_b: replace_def(&mut self.inner_b),
                 outer_b: replace(&mut self.outer_b, c1),
+                focus: Focus::new(),
+                focus_mut: FocusMut::new(),
             };
             self.length = index;
             self.prune();
@@ -1023,6 +1059,7 @@ impl<A: Clone> Vector<A> {
     /// Time: O(n)
     pub fn clear(&mut self) {
         if !self.is_empty() {
+            self.unfocus();
             self.length = 0;
             self.middle_level = 0;
             if !self.outer_f.is_empty() {
@@ -1196,6 +1233,11 @@ impl<A: Clone> Vector<A> {
 
     // Implementation details
 
+    fn unfocus(&self) {
+        self.focus.clear();
+        self.focus_mut.clear();
+    }
+
     fn prune(&mut self) {
         while self.middle_level > 0 && self.middle.is_single() {
             self.middle = self.middle.first_child().clone();
@@ -1264,6 +1306,8 @@ impl<A> Clone for Vector<A> {
             middle: self.middle.clone(),
             inner_b: self.inner_b.clone(),
             outer_b: self.outer_b.clone(),
+            focus: Focus::new(),
+            focus_mut: FocusMut::new(),
         }
     }
 }
